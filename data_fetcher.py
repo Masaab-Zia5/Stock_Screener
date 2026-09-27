@@ -1,3 +1,7 @@
+import yfinance as yf
+import pandas as pd
+
+
 import requests
 
 
@@ -45,3 +49,4 @@ def get_fundamentals(ticker: str) -> dict:
         "sector":    info.get("sector", "N/A"),
         "price":     info.get("currentPrice"),
     }
+    
