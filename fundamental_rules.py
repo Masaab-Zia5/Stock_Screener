@@ -1,3 +1,5 @@
+"""Fundamental ratio checks and display-value calculations for stock fundamentals."""
+
 from config import RULES_FUNDAMENTAL as DEFAULT_RULES
 
 
@@ -34,11 +36,13 @@ def check_fcf_yield(fundamentals: dict, rules: dict) -> bool:
 
 
 def check_de_ratio(fundamentals: dict, rules: dict) -> bool:
+    # NOTE: de_ratio is normalized to a plain ratio (not a percentage) at the
+    # source in data_fetcher.get_fundamentals — no conversion needed here.
     rule = rules["de_ratio"]
     val = fundamentals.get("de_ratio")
     if val is None:
         return False
-    return (val / 100) < rule["max"]
+    return val < rule["max"]
 
 
 def run_fundamental_checks(fundamentals: dict, rules: dict = None) -> dict:
@@ -75,7 +79,7 @@ def get_fundamental_values(fundamentals: dict, rules: dict = None) -> dict:
             "value":     round(pe, 2)          if pe  is not None else None,
             "display":   f"{pe:.2f}"           if pe  is not None else "N/A",
             "threshold": f"< {rules['pe_ratio']['max']}",
-            "passed":    rules["pe_ratio"]["enabled"] and pe is not None and pe > 0 and pe < rules["pe_ratio"]["max"],
+            "passed":    rules["pe_ratio"]["enabled"] and pe is not None and 0 < pe < rules["pe_ratio"]["max"],
             "enabled":   rules["pe_ratio"]["enabled"],
         },
         "pb_ratio":  {
@@ -83,7 +87,7 @@ def get_fundamental_values(fundamentals: dict, rules: dict = None) -> dict:
             "value":     round(pb, 2)          if pb  is not None else None,
             "display":   f"{pb:.2f}"           if pb  is not None else "N/A",
             "threshold": f"< {rules['pb_ratio']['max']}",
-            "passed":    rules["pb_ratio"]["enabled"] and pb is not None and pb > 0 and pb < rules["pb_ratio"]["max"],
+            "passed":    rules["pb_ratio"]["enabled"] and pb is not None and 0 < pb < rules["pb_ratio"]["max"],
             "enabled":   rules["pb_ratio"]["enabled"],
         },
         "peg_ratio": {
@@ -91,7 +95,7 @@ def get_fundamental_values(fundamentals: dict, rules: dict = None) -> dict:
             "value":     round(peg, 2)         if peg is not None else None,
             "display":   f"{peg:.2f}"          if peg is not None else "N/A",
             "threshold": f"< {rules['peg_ratio']['max']}",
-            "passed":    rules["peg_ratio"]["enabled"] and peg is not None and peg > 0 and peg < rules["peg_ratio"]["max"],
+            "passed":    rules["peg_ratio"]["enabled"] and peg is not None and 0 < peg < rules["peg_ratio"]["max"],
             "enabled":   rules["peg_ratio"]["enabled"],
         },
         "fcf_yield": {
@@ -104,10 +108,12 @@ def get_fundamental_values(fundamentals: dict, rules: dict = None) -> dict:
         },
         "de_ratio":  {
             "label":     "D/E Ratio",
-            "value":     round(de / 100, 2)    if de  is not None else None,
-            "display":   f"{de/100:.2f}"       if de  is not None else "N/A",
+            # de_ratio is already normalized to a plain ratio at the source
+            # (data_fetcher.get_fundamentals) — no /100 conversion needed here.
+            "value":     round(de, 2)          if de  is not None else None,
+            "display":   f"{de:.2f}"           if de  is not None else "N/A",
             "threshold": f"< {rules['de_ratio']['max']}",
-            "passed":    rules["de_ratio"]["enabled"] and de is not None and (de / 100) < rules["de_ratio"]["max"],
+            "passed":    rules["de_ratio"]["enabled"] and de is not None and de < rules["de_ratio"]["max"],
             "enabled":   rules["de_ratio"]["enabled"],
         },
     }
