@@ -169,8 +169,11 @@ def run_technical_checks(df: pd.DataFrame, rules: dict = None) -> dict:
         if rules[rule_name]["enabled"]:
             try:
                 results[rule_name] = check_fn(df, rules)
-            except Exception as e:
-                print(f"    [!] Error in {rule_name}: {e}")
+            except (KeyError, ZeroDivisionError, IndexError) as e:
+            # Expected data-quality issues (missing columns, insufficient
+            # history, division by zero in ratio calculations) — treat as
+            # a failed rule rather than crashing the whole screener run.
+                print(f"    [!] {rule_name} could not be evaluated for this data: {e}")
                 results[rule_name] = False
     return results
 
