@@ -3,18 +3,35 @@ import numpy as np
 from config import RULES_TECHNICAL as DEFAULT_RULES
 
 
-def check_rsi_breakout(df: pd.DataFrame, rules: dict) -> bool:
-    rule = rules["rsi_breakout"]
+def _calculate_rsi(df: pd.DataFrame, period: int = 14) -> pd.Series:
+    """Compute the RSI series for a price DataFrame using the given lookback period."""
     close = df["Close"]
     delta = close.diff()
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
-    avg_gain = gain.rolling(window=14).mean()
-    avg_loss = loss.rolling(window=14).mean()
+    avg_gain = gain.rolling(window=period).mean()
+    avg_loss = loss.rolling(window=period).mean()
     rs = avg_gain / avg_loss
-    rsi = 100 - (100 / (1 + rs))
-    current_rsi = rsi.iloc[-1]
+    return 100 - (100 / (1 + rs))
+
+
+def check_rsi_breakout(df: pd.DataFrame, rules: dict) -> bool:
+    rule = rules["rsi_breakout"]
+    current_rsi = _calculate_rsi(df).iloc[-1]
     return rule["min"] <= current_rsi <= rule["max"]
+
+
+# In get_technical_values():
+try:
+    rsi_series = _calculate_rsi(df)
+    rsi_val = round(float(rsi_series.iloc[-1]), 2)
+    rsi_min = rules["rsi_breakout"]["min"]
+    rsi_max = rules["rsi_breakout"]["max"]
+    rsi_passed    = rsi_min <= rsi_val <= rsi_max
+    rsi_display   = f"{rsi_val}"
+    rsi_threshold = f"between {rsi_min} and {rsi_max}"
+except Exception:
+    rsi_val, rsi_display, rsi_passed, rsi_threshold = None, "N/A", False, "N/A"
 
 
 def check_macd_crossover(df: pd.DataFrame, rules: dict) -> bool:
