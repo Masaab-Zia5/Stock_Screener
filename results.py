@@ -1,3 +1,5 @@
+"""Formats and outputs stock screener results (console tables and CSV export)."""
+
 import csv
 from tabulate import tabulate
 from config import PASS_THRESHOLD
@@ -59,7 +61,7 @@ def save_results_csv(results: list, filename: str = "screener_results.csv"):
         return
     fieldnames = ["ticker", "name", "sector", "price", "score", "rules_passed",
                   "total_rules", "passed"] + list(results[0]["rule_details"].keys())
-    with open(filename, "w", newline="") as f:
+    with open(filename, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         for r in results:
