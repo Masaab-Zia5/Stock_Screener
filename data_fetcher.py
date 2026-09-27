@@ -38,4 +38,4 @@ def get_price_history(ticker: str, period: str = "2y") -> pd.DataFrame:
     except Exception as e:
         print(f"  [!] Could not fetch price history for {ticker}: {e}")
         return None 
-    
+    #checking 
