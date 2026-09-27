@@ -2,6 +2,10 @@ import pandas as pd
 import numpy as np
 from config import RULES_TECHNICAL as DEFAULT_RULES
 
+# ── Shared indicator calculations ────────────────────────────────────────────
+# Each of these is used by both the pass/fail check function and the
+# display-value function below, so the underlying math only lives in one
+# place and cannot silently drift out of sync between the two.
 
 def _calculate_rsi(df: pd.DataFrame, period: int = 14) -> pd.Series:
     """Compute the RSI series for a price DataFrame using the given lookback period."""
@@ -15,35 +19,51 @@ def _calculate_rsi(df: pd.DataFrame, period: int = 14) -> pd.Series:
     return 100 - (100 / (1 + rs))
 
 
+def _calculate_macd(df: pd.DataFrame, fast: int = 12, slow: int = 26, signal_span: int = 9):
+    """Compute MACD line and signal line series for a price DataFrame."""
+    close = df["Close"]
+    ema_fast = close.ewm(span=fast, adjust=False).mean()
+    ema_slow = close.ewm(span=slow, adjust=False).mean()
+    macd = ema_fast - ema_slow
+    signal = macd.ewm(span=signal_span, adjust=False).mean()
+    return macd, signal
+
+
+def _macd_crossed_recently(macd: pd.Series, signal: pd.Series, bars: int = 3) -> bool:
+    """Return True if MACD crossed above signal within the last `bars` bars."""
+    for i in range(-bars, 0):
+        if macd.iloc[i] > signal.iloc[i] and macd.iloc[i - 1] <= signal.iloc[i - 1]:
+            return True
+    return False
+
+
+def _calculate_moving_averages(df: pd.DataFrame, fast: int = 50, slow: int = 200):
+    """Compute fast and slow simple moving average series for a price DataFrame."""
+    close = df["Close"]
+    ma_fast = close.rolling(window=fast).mean()
+    ma_slow = close.rolling(window=slow).mean()
+    return ma_fast, ma_slow
+
+
+def _calculate_bollinger_bandwidth(df: pd.DataFrame, window: int = 20) -> pd.Series:
+    """Compute Bollinger Band bandwidth ((upper - lower) / sma) for a price DataFrame."""
+    close = df["Close"]
+    sma = close.rolling(window=window).mean()
+    std = close.rolling(window=window).std()
+    upper = sma + (2 * std)
+    lower = sma - (2 * std)
+    return (upper - lower) / sma
+
+
 def check_rsi_breakout(df: pd.DataFrame, rules: dict) -> bool:
     rule = rules["rsi_breakout"]
     current_rsi = _calculate_rsi(df).iloc[-1]
     return rule["min"] <= current_rsi <= rule["max"]
 
 
-# In get_technical_values():
-try:
-    rsi_series = _calculate_rsi(df)
-    rsi_val = round(float(rsi_series.iloc[-1]), 2)
-    rsi_min = rules["rsi_breakout"]["min"]
-    rsi_max = rules["rsi_breakout"]["max"]
-    rsi_passed    = rsi_min <= rsi_val <= rsi_max
-    rsi_display   = f"{rsi_val}"
-    rsi_threshold = f"between {rsi_min} and {rsi_max}"
-except Exception:
-    rsi_val, rsi_display, rsi_passed, rsi_threshold = None, "N/A", False, "N/A"
-
-
-def check_macd_crossover(df: pd.DataFrame, rules: dict) -> bool:
-    close = df["Close"]
-    ema12 = close.ewm(span=12, adjust=False).mean()
-    ema26 = close.ewm(span=26, adjust=False).mean()
-    macd = ema12 - ema26
-    signal = macd.ewm(span=9, adjust=False).mean()
-    for i in range(-3, 0):
-        if macd.iloc[i] > signal.iloc[i] and macd.iloc[i - 1] <= signal.iloc[i - 1]:
-            return True
-    return False
+def check_macd_crossover(df: pd.DataFrame, rules: dict) -> bool:  # pylint: disable=unused-argument
+    macd, signal = _calculate_macd(df)
+    return _macd_crossed_recently(macd, signal)
 
 
 def _detect_volatility_squeeze(
@@ -65,12 +85,7 @@ def _detect_volatility_squeeze(
 
 def check_bb_squeeze(df: pd.DataFrame, rules: dict) -> bool:
     rule = rules["bb_squeeze"]
-    close = df["Close"]
-    sma20 = close.rolling(window=20).mean()
-    std20 = close.rolling(window=20).std()
-    upper = sma20 + (2 * std20)
-    lower = sma20 - (2 * std20)
-    bandwidth = (upper - lower) / sma20
+    bandwidth = _calculate_bollinger_bandwidth(df)
     squeeze_series = _detect_volatility_squeeze(
         bandwidth,
         window=rule.get("window", 60),
@@ -80,13 +95,12 @@ def check_bb_squeeze(df: pd.DataFrame, rules: dict) -> bool:
     return bool(squeeze_series.iloc[-1])
 
 
-def check_ma_confluence(df: pd.DataFrame, rules: dict) -> bool:
+def check_ma_confluence(df: pd.DataFrame, rules: dict) -> bool:  # pylint: disable=unused-argument
     """Price > 50MA > 200MA."""
     close = df["Close"]
-    ma50  = close.rolling(window=50).mean().iloc[-1]
-    ma200 = close.rolling(window=200).mean().iloc[-1]
+    ma50, ma200 = _calculate_moving_averages(df)
     price = close.iloc[-1]
-    return price > ma50 > ma200
+    return price > ma50.iloc[-1] > ma200.iloc[-1]
 
 
 def _find_cross(ma_fast: pd.Series, ma_slow: pd.Series, lookback_days: int, cross_type: str) -> tuple[bool, int | None]:
@@ -132,9 +146,7 @@ def check_golden_cross(df: pd.DataFrame, rules: dict) -> bool:
     required_bars = 200 + lookback
     if len(df) < required_bars:
         return False
-    close = df["Close"]
-    ma50  = close.rolling(window=50).mean()
-    ma200 = close.rolling(window=200).mean()
+        ma50, ma200 = _calculate_moving_averages(df)
     occurred, _ = _find_cross(ma50, ma200, lookback, "golden")
     return occurred
 
@@ -151,9 +163,7 @@ def check_death_cross(df: pd.DataFrame, rules: dict) -> bool:
     required_bars = 200 + lookback
     if len(df) < required_bars:
         return False
-    close = df["Close"]
-    ma50  = close.rolling(window=50).mean()
-    ma200 = close.rolling(window=200).mean()
+        ma50, ma200 = _calculate_moving_averages(df)
     occurred, _ = _find_cross(ma50, ma200, lookback, "death")
     # A death cross is bearish — the stock PASSES this rule only if NO death cross occurred
     return not occurred
@@ -203,14 +213,7 @@ def get_technical_values(df: pd.DataFrame, rules: dict = None) -> dict:
 
     # ── RSI ──────────────────────────────────────────────────────────────────
     try:
-        close = df["Close"]
-        delta = close.diff()
-        gain = delta.clip(lower=0)
-        loss = -delta.clip(upper=0)
-        avg_gain = gain.rolling(window=14).mean()
-        avg_loss = loss.rolling(window=14).mean()
-        rs = avg_gain / avg_loss
-        rsi_series = 100 - (100 / (1 + rs))
+        rsi_series = _calculate_rsi(df)
         rsi_val = round(float(rsi_series.iloc[-1]), 2)
         rsi_min = rules["rsi_breakout"]["min"]
         rsi_max = rules["rsi_breakout"]["max"]
@@ -222,18 +225,11 @@ def get_technical_values(df: pd.DataFrame, rules: dict = None) -> dict:
 
     # ── MACD ─────────────────────────────────────────────────────────────────
     try:
-        close  = df["Close"]
-        ema12  = close.ewm(span=12, adjust=False).mean()
-        ema26  = close.ewm(span=26, adjust=False).mean()
-        macd   = ema12 - ema26
-        signal = macd.ewm(span=9, adjust=False).mean()
+        macd, signal = _calculate_macd(df)
         macd_val   = round(float(macd.iloc[-1]), 4)
         signal_val = round(float(signal.iloc[-1]), 4)
         hist_val   = round(macd_val - signal_val, 4)
-        crossed = any(
-            macd.iloc[i] > signal.iloc[i] and macd.iloc[i - 1] <= signal.iloc[i - 1]
-            for i in range(-3, 0)
-        )
+        crossed = _macd_crossed_recently(macd, signal)
         macd_display   = f"MACD {macd_val}  |  Signal {signal_val}  |  Hist {hist_val}"
         macd_threshold = "MACD crossed above signal in last 3 bars"
         macd_passed    = crossed
@@ -242,12 +238,7 @@ def get_technical_values(df: pd.DataFrame, rules: dict = None) -> dict:
 
     # ── Bollinger Band Squeeze ────────────────────────────────────────────────
     try:
-        close     = df["Close"]
-        sma20     = close.rolling(window=20).mean()
-        std20     = close.rolling(window=20).std()
-        upper     = sma20 + (2 * std20)
-        lower     = sma20 - (2 * std20)
-        bandwidth = (upper - lower) / sma20
+        bandwidth   = _calculate_bollinger_bandwidth(df)
         bb_window   = rules["bb_squeeze"].get("window", 60)
         bb_pct      = rules["bb_squeeze"].get("percentile_threshold", 0.20)
         bb_lookback = rules["bb_squeeze"].get("lookback_periods", 3)
@@ -275,8 +266,9 @@ def get_technical_values(df: pd.DataFrame, rules: dict = None) -> dict:
     try:
         close = df["Close"]
         price = round(float(close.iloc[-1]), 2)
-        ma50  = round(float(close.rolling(window=50).mean().iloc[-1]), 2)
-        ma200 = round(float(close.rolling(window=200).mean().iloc[-1]), 2)
+        ma50_series, ma200_series = _calculate_moving_averages(df)
+        ma50  = round(float(ma50_series.iloc[-1]), 2)
+        ma200 = round(float(ma200_series.iloc[-1]), 2)
         ma_passed    = price > ma50 > ma200
         ma_display   = f"Price {price}  |  50-day MA {ma50}  |  200-day MA {ma200}"
         ma_threshold = "Price > 50-day MA > 200-day MA"
@@ -285,18 +277,16 @@ def get_technical_values(df: pd.DataFrame, rules: dict = None) -> dict:
 
     # ── Golden Cross ──────────────────────────────────────────────────────────
     try:
-        close    = df["Close"]
-        ma50     = close.rolling(window=50).mean()
-        ma200    = close.rolling(window=200).mean()
+        ma50_series, ma200_series = _calculate_moving_averages(df)
         gc_lookback = rules["golden_cross"].get("lookback_days", 90)
-        gc_occurred, gc_days_ago = _find_cross(ma50, ma200, gc_lookback, "golden")
+        gc_occurred, gc_days_ago = _find_cross(ma50_series, ma200_series, gc_lookback, "golden")
         gc_passed    = gc_occurred
         gc_display   = (
             f"Golden Cross {gc_days_ago} trading day(s) ago"
             if gc_occurred else
             f"No Golden Cross in last {gc_lookback} days  "
-            f"|  50-day MA {round(float(ma50.iloc[-1]), 2)}  "
-            f"|  200-day MA {round(float(ma200.iloc[-1]), 2)}"
+            f"|  50-day MA {round(float(ma50_series.iloc[-1]), 2)}  "
+            f"|  200-day MA {round(float(ma200_series.iloc[-1]), 2)}"
         )
         gc_threshold = f"50MA crossed above 200MA within last {gc_lookback} trading days"
     except Exception:
@@ -304,19 +294,17 @@ def get_technical_values(df: pd.DataFrame, rules: dict = None) -> dict:
 
     # ── Death Cross ───────────────────────────────────────────────────────────
     try:
-        close    = df["Close"]
-        ma50     = close.rolling(window=50).mean()
-        ma200    = close.rolling(window=200).mean()
+        ma50_series, ma200_series = _calculate_moving_averages(df)
         dc_lookback = rules["death_cross"].get("lookback_days", 90)
-        dc_occurred, dc_days_ago = _find_cross(ma50, ma200, dc_lookback, "death")
+        dc_occurred, dc_days_ago = _find_cross(ma50_series, ma200_series, dc_lookback, "death")
         # Passes if NO death cross occurred
         dc_passed  = not dc_occurred
         dc_display = (
             f"⚠️ Death Cross {dc_days_ago} trading day(s) ago"
             if dc_occurred else
             f"No Death Cross in last {dc_lookback} days  "
-            f"|  50-day MA {round(float(ma50.iloc[-1]), 2)}  "
-            f"|  200-day MA {round(float(ma200.iloc[-1]), 2)}"
+            f"|  50-day MA {round(float(ma50_series.iloc[-1]), 2)}  "
+            f"|  200-day MA {round(float(ma200_series.iloc[-1]), 2)}"
         )
         dc_threshold = f"No Death Cross (50MA below 200MA) within last {dc_lookback} trading days"
     except Exception:
